@@ -1,46 +1,40 @@
 import pandas as pd
 import requests
-import logging
 
-# Logs
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+pd.options.display.float_format = 'R$ {:,.2f}'.format
 
-def fetch_budget_data(city_code="3136702"): # Código IBGE para Juiz de Fora
-    logging.info(f"Iniciando coleta de dados para o município: {city_code}")
+def auditoria_zema_vs_realidade(ano=2023):
+    # ID de Minas Gerais no Siconfi para o Ente Estadual é '31'
+    url = f"https://apidatalake.tesouro.gov.br/ords/siconfi/tt/dca?an_exercicio={ano}&id_ente=31"
     
-    # API
     try:
-        # Dataset
-        data = {
-            'ano': [2022, 2023, 2024, 2024],
-            'rubrica': ['Defesa Civil', 'Obras de Contenção', 'Drenagem Urbana', 'Gestão de Riscos'],
-            'valor_empenhado': [1500000.00, 2800000.50, 4200000.00, 950000.00],
-            'valor_liquidado': [1200000.00, 2500000.00, 1800000.00, 900000.00]
-        }
-        return pd.DataFrame(data)
+        response = requests.get(url, timeout=30)
+        data = response.json().get('items', [])
+        df = pd.DataFrame(data)
+        df.columns = [col.lower() for col in df.columns]
+        
+        # Pivotando
+        col_valor = 'vlr_conta' if 'vlr_conta' in df.columns else 'valor'
+        df_pivot = df.pivot_table(index='conta', columns='coluna', values=col_valor, aggfunc='sum').reset_index()
+        
+        # Onde o investimento pode estar "escondido"?
+        categorias_investigadas = [
+            'Defesa Civil', 
+            'Urbanismo', 
+            'Transporte Rodoviário', # Reconstrução de estradas pós-chuva
+            'Infraestrutura Urbana',
+            'Saneamento',
+            'Gestão Ambiental'
+        ]
+        
+        mask = df_pivot['conta'].str.contains('|'.join(categorias_investigadas), case=False, na=False)
+        df_analise = df_pivot[mask].copy()
+        
+        # Foco na "Despesa Paga" para ver o que saiu do caixa do Estado
+        return df_analise[['conta', 'Despesas Empenhadas', 'Despesas Pagas']]
+        
     except Exception as e:
-        logging.error(f"Erro ao coletar dados: {e}")
-        return None
+        return f"Erro na análise: {e}"
 
-def transform_data(df):
-    if df is None: return None
-    logging.info("Iniciando transformações e cálculos de KPIs.")
-    
-    # Cálculo de aproveitamento orçamentário
-    df['percentual_executado'] = (df['valor_liquidado'] / df['valor_empenhado']) * 100
-    
-    # Normalização
-    df['rubrica'] = df['rubrica'].str.upper()
-    
-    return df
-
-def save_output(df, filename="orcamento_jf_processado.csv"):
-    if df is not None:
-        df.to_csv(filename, index=False)
-        logging.info(f"Arquivo salvo com sucesso: {filename}")
-
-if __name__ == "__main__":
-    # Execução
-    df_raw = fetch_budget_data()
-    df_clean = transform_data(df_raw)
-    save_output(df_clean)
+df_mg = auditoria_zema_vs_realidade(2023)
+print(df_mg)
